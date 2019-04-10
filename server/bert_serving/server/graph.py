@@ -75,13 +75,7 @@ def optimize_graph(args, logger=None):
                 token_type_ids=input_type_ids,
                 use_one_hot_embeddings=False)
 
-            tvars = tf.trainable_variables()
-
-            (assignment_map, initialized_variable_names
-             ) = modeling.get_assignment_map_from_checkpoint(tvars, init_checkpoint)
-
-            tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
-
+            '''
             minus_mask = lambda x, m: x - tf.expand_dims(1.0 - m, axis=-1) * 1e30
             mul_mask = lambda x, m: x * tf.expand_dims(m, axis=-1)
             masked_reduce_max = lambda x, m: tf.reduce_max(minus_mask(x, m), axis=1)
@@ -122,6 +116,53 @@ def optimize_graph(args, logger=None):
 
             pooled = tf.identity(pooled, 'final_encodes')
             output_tensors = [pooled]
+            '''
+            final_hidden = model.get_sequence_output()
+
+            final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
+            batch_size = final_hidden_shape[0]
+            seq_length = final_hidden_shape[1]
+            hidden_size = final_hidden_shape[2]
+            
+            dataset = "squad"
+            output_weights = tf.get_variable(
+            "cls/{}/output_weights".format(dataset), [2, hidden_size],
+            initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+            output_bias = tf.get_variable(
+            "cls/{}/output_bias".format(dataset), [2], initializer=tf.zeros_initializer())
+
+            final_hidden_matrix = tf.reshape(final_hidden,
+                             [batch_size * seq_length, hidden_size])
+            logits = tf.matmul(final_hidden_matrix, output_weights, transpose_b=True)
+
+            logits = tf.nn.bias_add(logits, output_bias)
+
+            logits = tf.reshape(logits, [batch_size, seq_length, 2])
+            logits = tf.transpose(logits, [2, 0, 1])
+
+            unstacked_logits = tf.unstack(logits, axis=0)
+
+            (start_logits, end_logits) = (unstacked_logits[0], unstacked_logits[1])
+            start_logits = tf.identity(start_logits, 'start_logits')
+            end_logits = tf.identity(end_logits, 'end_logits')
+
+            tvars = tf.trainable_variables()
+
+            (assignment_map, initialized_variable_names
+             ) = modeling.get_assignment_map_from_checkpoint(tvars, init_checkpoint)
+            
+            tf.logging.info("**** Trainable Variables ****")
+            for var in tvars:
+              init_string = ""
+              if var.name in initialized_variable_names:
+                init_string = ", *INIT_FROM_CKPT*"
+                tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape,
+                              init_string)
+
+            tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
+            
+            output_tensors = [start_logits, end_logits]
             tmp_g = tf.get_default_graph().as_graph_def()
 
         with tf.Session(config=config) as sess:
@@ -130,6 +171,8 @@ def optimize_graph(args, logger=None):
             sess.run(tf.global_variables_initializer())
             dtypes = [n.dtype for n in input_tensors]
             logger.info('optimize...')
+            print([n.name for n in input_tensors])
+            print([n.name for n in output_tensors])
             tmp_g = optimize_for_inference(
                 tmp_g,
                 [n.name[:-2] for n in input_tensors],

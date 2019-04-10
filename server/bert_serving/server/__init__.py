@@ -166,9 +166,7 @@ class BertServer(threading.Thread):
             try:
                 request = frontend.recv_multipart()
                 client, msg, req_id, msg_len = request
-                assert req_id.isdigit()
-                assert msg_len.isdigit()
-            except (ValueError, AssertionError):
+            except ValueError:
                 self.logger.error('received a wrongly-formatted request (expected 4 frames, got %d)' % len(request))
                 self.logger.error('\n'.join('field %d: %s' % (idx, k) for idx, k in enumerate(request)), exc_info=True)
             else:
@@ -482,13 +480,17 @@ class BertWorker(Process):
 
             input_names = ['input_ids', 'input_mask', 'input_type_ids']
 
-            output = tf.import_graph_def(graph_def,
+            start_logits, end_logits = tf.import_graph_def(graph_def,
                                          input_map={k + ':0': features[k] for k in input_names},
-                                         return_elements=['final_encodes:0'])
+                                         #return_elements=['final_encodes:0'])
+                                         return_elements=['start_logits:0', 'end_logits:0'])
+
 
             return EstimatorSpec(mode=mode, predictions={
                 'client_id': features['client_id'],
-                'encodes': output[0]
+                 # 'encodes': output[0],
+                'start_logits': start_logits,
+                'end_logits': end_logits
             })
 
         config = tf.ConfigProto(device_count={'GPU': 0 if self.device_id < 0 else 1})
@@ -523,9 +525,13 @@ class BertWorker(Process):
 
         sink_embed.connect(self.sink_address)
         sink_token.connect(self.sink_address)
+        # ret = estimator.predict(self.input_fn_builder(receivers, tf, sink_token), yield_single_examples=False)
         for r in estimator.predict(self.input_fn_builder(receivers, tf, sink_token), yield_single_examples=False):
-            send_ndarray(sink_embed, r['client_id'], r['encodes'], ServerCmd.data_embed)
-            logger.info('job done\tsize: %s\tclient: %s' % (r['encodes'].shape, r['client_id']))
+            #print(r['client_id'], r['start_logits'], r['end_logits'])
+            ret = np.array([r['start_logits'], r['end_logits']])
+            ret = ret.swapaxes(0,1)
+            send_ndarray(sink_embed, r['client_id'], ret, ServerCmd.data_embed)
+            logger.info('job done\tsize: %s\tclient: %s' % (ret.shape, r['client_id']))
 
     def input_fn_builder(self, socks, tf, sink):
         from .bert.extract_features import convert_lst_to_features
