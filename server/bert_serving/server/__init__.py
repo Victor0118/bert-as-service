@@ -525,11 +525,8 @@ class BertWorker(Process):
 
         sink_embed.connect(self.sink_address)
         sink_token.connect(self.sink_address)
-        # ret = estimator.predict(self.input_fn_builder(receivers, tf, sink_token), yield_single_examples=False)
         for r in estimator.predict(self.input_fn_builder(receivers, tf, sink_token), yield_single_examples=False):
-            #print(r['client_id'], r['start_logits'], r['end_logits'])
-            ret = np.array([r['start_logits'], r['end_logits']])
-            ret = ret.swapaxes(0,1)
+            ret = np.array([[s, e] for s, e in zip(r['start_logits'], r['end_logits'])])
             send_ndarray(sink_embed, r['client_id'], ret, ServerCmd.data_embed)
             logger.info('job done\tsize: %s\tclient: %s' % (ret.shape, r['client_id']))
 
@@ -555,7 +552,9 @@ class BertWorker(Process):
                 for sock_idx, sock in enumerate(socks):
                     if sock in events:
                         client_id, raw_msg = sock.recv_multipart()
+                        '''
                         msg = jsonapi.loads(raw_msg)
+                        
                         logger.info('new job\tsocket: %d\tsize: %d\tclient: %s' % (sock_idx, len(msg), client_id))
                         # check if msg is a list of list, if yes consider the input is already tokenized
                         is_tokenized = all(isinstance(el, list) for el in msg)
@@ -571,6 +570,14 @@ class BertWorker(Process):
                             'input_ids': [f.input_ids for f in tmp_f],
                             'input_mask': [f.input_mask for f in tmp_f],
                             'input_type_ids': [f.input_type_ids for f in tmp_f]
+                        }
+                        '''
+                        tmp_f = jsonapi.loads(raw_msg)
+                        yield {
+                            'client_id': client_id,
+                            'input_ids': [f["input_ids"] for f in tmp_f],
+                            'input_mask': [f["input_mask"] for f in tmp_f],
+                            'input_type_ids': [f["segment_ids"] for f in tmp_f]
                         }
 
         def input_fn():

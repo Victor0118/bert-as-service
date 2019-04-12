@@ -277,6 +277,7 @@ class BertClient(object):
             warnings.warn('server does not put a restriction on "max_seq_len", '
                           'it will determine "max_seq_len" dynamically according to the sequences in the batch. '
                           'you can restrict the sequence length on the client side for better efficiency')
+        '''
         elif self.length_limit and not self._check_length(texts, self.length_limit, is_tokenized):
             warnings.warn('some of your sentences have more tokens than "max_seq_len=%d" set on the server, '
                           'as consequence you may get less-accurate or truncated embeddings.\n'
@@ -284,7 +285,7 @@ class BertClient(object):
                           '- disable the length-check by create a new "BertClient(check_length=False)" '
                           'when you do not want to display this warning\n'
                           '- or, start a new server with a larger "max_seq_len"' % self.length_limit)
-
+        '''
         req_id = self._send(jsonapi.dumps(texts), len(texts))
         if not blocking:
             return None
@@ -383,11 +384,13 @@ class BertClient(object):
             raise ValueError(
                 '"%s" must be a non-empty list, but received %s with %d elements' % (texts, type(texts), len(texts)))
         for idx, s in enumerate(texts):
-            if not isinstance(s, _str):
+            '''
+            if not isinstance(s, _str) and not isinstance(s, bytes):
                 raise TypeError('all elements in the list must be %s, but element %d is %s' % (type(''), idx, type(s)))
             if not s.strip():
                 raise ValueError(
                     'all elements in the list must be non-empty string, but element %d is %s' % (idx, repr(s)))
+            '''
             if _py2:
                 texts[idx] = _unicode(texts[idx])
 
